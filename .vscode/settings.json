@@ -1,0 +1,12 @@
+{
+	"mcpServers": {
+		"playwright": {
+			"command": "node",
+			"args": ["./dist/index.js"],
+			"cwd": "/path/to/playwright-mcp-server",
+			"env": {
+				"NODE_ENV": "production"
+			}
+		}
+	}
+}
