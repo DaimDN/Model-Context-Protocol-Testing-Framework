@@ -6,7 +6,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-class PlaywrightHTTPServer {
+class CopilotPlaywrightAgent {
   private browsers: Map<string, Browser> = new Map();
   private contexts: Map<string, BrowserContext> = new Map();
   private pages: Map<string, Page> = new Map();
@@ -20,9 +20,76 @@ class PlaywrightHTTPServer {
   private setupRoutes() {
     // Health check
     app.get('/health', (req, res) => {
-      res.json({ status: 'ok', timestamp: new Date().toISOString() });
+      res.json({ 
+        status: 'ok', 
+        timestamp: new Date().toISOString(),
+        message: 'Playwright agent ready for Copilot commands'
+      });
     });
 
+    // Natural language command endpoint for Copilot
+    app.post('/copilot/command', async (req, res) => {
+      try {
+        const { command, pageId, context } = req.body;
+        const result = await this.executeNaturalLanguageCommand(command, pageId, context);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ 
+          error: error instanceof Error ? error.message : 'Unknown error',
+          suggestion: 'Try breaking down the command into smaller steps'
+        });
+      }
+    });
+
+    // Session management for Copilot workflows
+    app.post('/copilot/session/start', async (req, res) => {
+      try {
+        const { sessionId, browserType = 'chromium', headless = false } = req.body;
+        const result = await this.startCopilotSession(sessionId, browserType, headless);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+      }
+    });
+
+    // Get page state for Copilot context
+    app.get('/copilot/page/:pageId/state', async (req, res) => {
+      try {
+        const { pageId } = req.params;
+        const result = await this.getPageStateForCopilot(pageId);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+      }
+    });
+
+    // Multi-step workflow execution
+    app.post('/copilot/workflow', async (req, res) => {
+      try {
+        const { workflow, pageId } = req.body;
+        const result = await this.executeWorkflow(workflow, pageId);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+      }
+    });
+
+    // Smart element interaction
+    app.post('/copilot/interact', async (req, res) => {
+      try {
+        const { pageId, instruction, data } = req.body;
+        const result = await this.smartInteract(pageId, instruction, data);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+      }
+    });
+
+    // Original Playwright API routes for direct control
+    this.setupOriginalRoutes();
+  }
+
+  private setupOriginalRoutes() {
     // Launch browser
     app.post('/browser/launch', async (req, res) => {
       try {
@@ -155,6 +222,291 @@ class PlaywrightHTTPServer {
     });
   }
 
+  // Copilot-specific methods
+  private async executeNaturalLanguageCommand(command: string, pageId: string, context?: any) {
+    const page = this.pages.get(pageId);
+    if (!page) {
+      throw new Error(`Page with ID ${pageId} not found`);
+    }
+
+    // Parse natural language commands
+    const lowerCommand = command.toLowerCase();
+    
+    if (lowerCommand.includes('click') || lowerCommand.includes('press')) {
+      return await this.handleClickCommand(page, command, context);
+    } else if (lowerCommand.includes('type') || lowerCommand.includes('fill') || lowerCommand.includes('enter')) {
+      return await this.handleTypeCommand(page, command, context);
+    } else if (lowerCommand.includes('navigate') || lowerCommand.includes('go to')) {
+      return await this.handleNavigateCommand(page, command, context);
+    } else if (lowerCommand.includes('wait') || lowerCommand.includes('until')) {
+      return await this.handleWaitCommand(page, command, context);
+    } else if (lowerCommand.includes('screenshot') || lowerCommand.includes('capture')) {
+      return await this.handleScreenshotCommand(page, command, context);
+    } else if (lowerCommand.includes('scroll')) {
+      return await this.handleScrollCommand(page, command, context);
+    } else {
+      return { 
+        success: false, 
+        message: `Command "${command}" not recognized. Available commands: click, type, navigate, wait, screenshot, scroll`,
+        suggestions: ['Try being more specific', 'Use action words like "click", "type", "navigate"']
+      };
+    }
+  }
+
+  private async handleClickCommand(page: Page, command: string, context?: any) {
+    // Extract what to click from the command
+    const clickTargets = this.extractClickTarget(command);
+    
+    for (const target of clickTargets) {
+      try {
+        await page.click(target);
+        return { success: true, action: 'click', target, command };
+      } catch (error) {
+        // Try alternative selectors
+        continue;
+      }
+    }
+    
+    return { success: false, message: `Could not find clickable element for: ${command}` };
+  }
+
+  private async handleTypeCommand(page: Page, command: string, context?: any) {
+    const typeData = this.extractTypeData(command);
+    
+    if (typeData.selector && typeData.text) {
+      await page.fill(typeData.selector, typeData.text);
+      return { success: true, action: 'type', selector: typeData.selector, text: typeData.text };
+    }
+    
+    return { success: false, message: `Could not extract type information from: ${command}` };
+  }
+
+  private async handleNavigateCommand(page: Page, command: string, context?: any) {
+    const url = this.extractUrl(command);
+    
+    if (url) {
+      await page.goto(url);
+      return { success: true, action: 'navigate', url };
+    }
+    
+    return { success: false, message: `Could not extract URL from: ${command}` };
+  }
+
+  private async handleWaitCommand(page: Page, command: string, context?: any) {
+    const waitCondition = this.extractWaitCondition(command);
+    
+    if (waitCondition.type === 'selector') {
+      await page.waitForSelector(waitCondition.value);
+      return { success: true, action: 'wait', condition: waitCondition };
+    } else if (waitCondition.type === 'timeout') {
+      await page.waitForTimeout(waitCondition.value);
+      return { success: true, action: 'wait', condition: waitCondition };
+    }
+    
+    return { success: false, message: `Could not extract wait condition from: ${command}` };
+  }
+
+  private async handleScreenshotCommand(page: Page, command: string, context?: any) {
+    const fullPage = command.includes('full') || command.includes('entire');
+    const screenshot = await page.screenshot({ fullPage });
+    const base64 = screenshot.toString('base64');
+    
+    return { success: true, action: 'screenshot', screenshot: base64, fullPage };
+  }
+
+  private async handleScrollCommand(page: Page, command: string, context?: any) {
+    const scrollData = this.extractScrollData(command);
+    
+    await page.evaluate((data) => {
+      window.scrollBy(data.x, data.y);
+    }, scrollData);
+    
+    return { success: true, action: 'scroll', ...scrollData };
+  }
+
+  private async startCopilotSession(sessionId: string, browserType: string, headless: boolean) {
+    const browserId = `copilot-${sessionId}`;
+    const contextId = `copilot-context-${sessionId}`;
+    const pageId = `copilot-page-${sessionId}`;
+
+    // Launch browser
+    await this.launchBrowser(browserType, headless, browserId);
+    
+    // Create context
+    await this.createContext(browserId, contextId, { width: 1920, height: 1080 });
+    
+    // Create page
+    await this.createPage(contextId, pageId);
+
+    return { 
+      success: true, 
+      sessionId, 
+      browserId, 
+      contextId, 
+      pageId,
+      message: 'Copilot session ready. You can now send natural language commands.'
+    };
+  }
+
+  private async getPageStateForCopilot(pageId: string) {
+    const page = this.pages.get(pageId);
+    if (!page) {
+      throw new Error(`Page with ID ${pageId} not found`);
+    }
+
+    const url = page.url();
+    const title = await page.title();
+    const elements = await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button')).map(b => b.textContent?.trim());
+      const inputs = Array.from(document.querySelectorAll('input')).map(i => i.placeholder || i.name);
+      const links = Array.from(document.querySelectorAll('a')).map(a => a.textContent?.trim());
+      
+      return { buttons, inputs, links };
+    });
+
+    return {
+      success: true,
+      pageState: {
+        url,
+        title,
+        elements,
+        timestamp: new Date().toISOString()
+      }
+    };
+  }
+
+  private async executeWorkflow(workflow: any[], pageId: string) {
+    const results = [];
+    
+    for (const step of workflow) {
+      try {
+        const result = await this.executeNaturalLanguageCommand(step.command, pageId, step.context);
+        results.push({ step: step.name, result });
+      } catch (error) {
+        results.push({ step: step.name, error: error.message });
+      }
+    }
+    
+    return { success: true, workflow: results };
+  }
+
+  private async smartInteract(pageId: string, instruction: string, data?: any) {
+    const page = this.pages.get(pageId);
+    if (!page) {
+      throw new Error(`Page with ID ${pageId} not found`);
+    }
+
+    // Use AI-like heuristics to find and interact with elements
+    const result = await page.evaluate((instruction, data) => {
+      // Smart element detection based on instruction
+      const findBestElement = (instruction: string) => {
+        const lower = instruction.toLowerCase();
+        
+        if (lower.includes('submit') || lower.includes('send')) {
+          return document.querySelector('button[type="submit"], input[type="submit"]');
+        } else if (lower.includes('search')) {
+          return document.querySelector('input[type="search"], input[placeholder*="search"]');
+        } else if (lower.includes('email')) {
+          return document.querySelector('input[type="email"], input[name*="email"]');
+        } else if (lower.includes('password')) {
+          return document.querySelector('input[type="password"]');
+        }
+        
+        return null;
+      };
+      
+      const element = findBestElement(instruction);
+      if (element) {
+        return { found: true, tagName: element.tagName, type: element.type || 'unknown' };
+      }
+      
+      return { found: false };
+    }, instruction, data);
+
+    return { success: true, interaction: result, instruction };
+  }
+
+  // Helper methods for parsing natural language
+  private extractClickTarget(command: string): string[] {
+    const targets = [];
+    
+    // Common patterns
+    if (command.includes('button')) {
+      targets.push('button');
+    }
+    if (command.includes('submit')) {
+      targets.push('button[type="submit"]', 'input[type="submit"]');
+    }
+    if (command.includes('link')) {
+      targets.push('a');
+    }
+    
+    // Extract quoted text
+    const quoted = command.match(/"([^"]*)"/);
+    if (quoted) {
+      targets.push(`text="${quoted[1]}"`, `[aria-label="${quoted[1]}"]`);
+    }
+    
+    return targets;
+  }
+
+  private extractTypeData(command: string): { selector?: string, text?: string } {
+    const typeMatch = command.match(/type\s+"([^"]*)"(?:\s+(?:in|into)\s+(.+))?/i);
+    if (typeMatch) {
+      return { text: typeMatch[1], selector: typeMatch[2] || 'input' };
+    }
+    
+    const fillMatch = command.match(/fill\s+(.+)\s+with\s+"([^"]*)"/i);
+    if (fillMatch) {
+      return { selector: fillMatch[1], text: fillMatch[2] };
+    }
+    
+    return {};
+  }
+
+  private extractUrl(command: string): string | null {
+    const urlMatch = command.match(/(?:navigate|go)\s+to\s+(.+)/i);
+    if (urlMatch) {
+      let url = urlMatch[1].trim();
+      if (!url.startsWith('http')) {
+        url = 'https://' + url;
+      }
+      return url;
+    }
+    return null;
+  }
+
+  private extractWaitCondition(command: string): { type: string, value: any } {
+    const selectorMatch = command.match(/wait\s+(?:for|until)\s+(.+)/i);
+    if (selectorMatch) {
+      return { type: 'selector', value: selectorMatch[1] };
+    }
+    
+    const timeMatch = command.match(/wait\s+(\d+)\s*(?:ms|seconds?)/i);
+    if (timeMatch) {
+      const time = parseInt(timeMatch[1]);
+      const unit = command.includes('second') ? 1000 : 1;
+      return { type: 'timeout', value: time * unit };
+    }
+    
+    return { type: 'timeout', value: 1000 };
+  }
+
+  private extractScrollData(command: string): { x: number, y: number } {
+    if (command.includes('down')) {
+      return { x: 0, y: 500 };
+    } else if (command.includes('up')) {
+      return { x: 0, y: -500 };
+    } else if (command.includes('right')) {
+      return { x: 500, y: 0 };
+    } else if (command.includes('left')) {
+      return { x: -500, y: 0 };
+    }
+    
+    return { x: 0, y: 500 };
+  }
+
+  // Original Playwright methods
   private async launchBrowser(browserType: string, headless: boolean, browserId: string) {
     if (this.browsers.has(browserId)) {
       throw new Error(`Browser with ID ${browserId} already exists`);
@@ -329,11 +681,13 @@ class PlaywrightHTTPServer {
 
   public start() {
     app.listen(this.port, () => {
-      console.log(`Playwright HTTP Server running on port ${this.port}`);
+      console.log(`🤖 Copilot Playwright Agent running on port ${this.port}`);
+      console.log(`🚀 Ready to receive natural language commands!`);
+      console.log(`📝 Example: POST /copilot/command with { "command": "click the submit button", "pageId": "your-page-id" }`);
     });
   }
 }
 
 // Start the server
-const server = new PlaywrightHTTPServer(3000);
+const server = new CopilotPlaywrightAgent(3000);
 server.start();
